@@ -39,12 +39,15 @@ Options:
 ```
 
 ### Examples
-Read only access 
+Read only access:
+
 `$ cumin.py -H mycassandrahost -g -u auser -r akeyspace --select`
 
-Create a new superuser 
+Create a new superuser:
+
 `$ cumin.py -H anothercassandrahost -n -u bossman --super`
 
-Change a user's password
+Change a user's password:
+
 `$ cumin.py -H thatcassandrahost -p -u buser`
 `$ cumin.py -H thatcassandrahost -p -u buser -w secretpassword`

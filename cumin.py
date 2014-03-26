@@ -330,6 +330,7 @@ def main():
 		if options.permission_revoke == True:
 			revokeCassandraUser(session, options.database_resource, options.database_username)
 		else: 
+			# Make an array of grants if we have less than 'ALL'
 			grants = []
 			if options.permission_all == True:
 				grants = ['ALL']

@@ -40,11 +40,11 @@ Options:
 
 ### Examples
 * Read only access 
-..* `$ cumin.py -H mycassandrahost -g -u auser -r akeyspace --select`
+`$ cumin.py -H mycassandrahost -g -u auser -r akeyspace --select`
 
 * Create a new superuser 
-..* `$ cumin.py -H anothercassandrahost -n -u bossman --super`
+`$ cumin.py -H anothercassandrahost -n -u bossman --super`
 
 * Change a user's password
-..* `$ cumin.py -H thatcassandrahost -p -u buser`
-..* `$ cumin.py -H thatcassandrahost -p -u buser -w secretpassword`
+`$ cumin.py -H thatcassandrahost -p -u buser`
+`$ cumin.py -H thatcassandrahost -p -u buser -w secretpassword`

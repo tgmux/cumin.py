@@ -5,10 +5,11 @@ A User Manager Utility for Cassandra 1.2.x
 
 ## Installation
 
-$ for foo in $(cat requirements.txt); do sudo pip install $foo; done
+    $ for foo in $(cat requirements.txt); do sudo pip install $foo; done
 
 ## Usage
-```Usage: cumin.py [options]
+```
+Usage: cumin.py [options]
 
 Options:
   -h, --help            show this help message and exit

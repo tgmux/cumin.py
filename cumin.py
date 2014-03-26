@@ -1,7 +1,7 @@
 #! /usr/bin/python
 import bcrypt
-from cassandra.cluster import Cluster, NoHostAvailable
 from cassandra import InvalidRequest
+from cassandra.cluster import Cluster, NoHostAvailable
 import ConfigParser
 import getpass
 from optparse import OptionParser
@@ -10,12 +10,18 @@ import sys
 
 # Connect to cassandra and return a session
 def connectCassandra(hostname, username, password):
-	# Simple function to return a dict with connection credentials
+	# Simple function to return a dict with connection credentials because reasons
 	def getCredential(self):
 		return {'username':username, 'password':password}
 
-	session = Cluster([hostname], auth_provider=getCredential).connect("system_auth")
-	return session
+	# Perform the actual connect and return our session
+	try:
+		session = Cluster([hostname], auth_provider=getCredential).connect("system_auth")
+		return session
+	except NoHostAvailable as e:
+		sys.exit("Error: " + str(e[1][hostname]))
+	except Exception as e:
+		sys.exit("Error: Unhandled exception connecting to host: " + str(e[0]))
 
 # List users configured in a given cassandra host
 def listCassandraUsers(session):
@@ -119,19 +125,21 @@ def listCassandraUsers(session):
 		hash_rounds = user['salted_hash'][4:6]
 		print username.ljust(max_username_length), hash_rounds.ljust(4), resource.ljust(max_resource_length), permissions
 	return True
-
+#
 # Create a new cassandra user
 def createCassandraUser(session, username, password):
-	session.execute(
-		"""
-		CREATE USER %s WITH PASSWORD %s NOSUPERUSER
-		""",
-		(username, password)
-	)
-
-	passwdCassandraUser(session, username, password)
-	return True
-
+	try:
+		session.execute(
+			"""
+			CREATE USER %s WITH PASSWORD %s NOSUPERUSER
+			""",
+			(username, password)
+		)
+		passwdCassandraUser(session, username, password)
+		return True
+	except Exception as e:
+		sys.exit("Exception executing CREATE USER:" + str(e[0]))
+#
 # Delete a cassandra user
 def deleteCassandraUser(session, username):
 	try:
@@ -141,9 +149,10 @@ def deleteCassandraUser(session, username):
 		print "Error:", e[0]
 		sys.exit()
 	except Exception as e:
-		print "Unhandled exception executing DROP USER:", e[0]
+		print "Exception executing DROP USER:", e[0]
 		sys.exit()
-
+#
+# Ask a user for their password interactively
 def getPasswdInput(username):
 	while True:
 		first_password = getpass.getpass(prompt="Please enter password for user " + username + ": ")
@@ -195,14 +204,14 @@ def grantCassandraUser(session, resource, username, grants):
 
 	# This is actually caught when this function is called, but we should protect ourselves here too
 	else:
-		sys.exit("\nFatal :: Please supply some grants with your grant option.\n")
+		sys.exit("Fatal: Please supply some grants with your grant option.")
 
 	return True
 
 def main():
 	# Parse command line arguments
 	parser = OptionParser()
-	parser.add_option("--conf",			action="store",		 help="Path to config file",	dest="config_path", 		type="string")
+	parser.add_option("--conf",	action="store",	help="Path to config file (/etc/cumin.conf default)", dest="config_path", type="string")
 	parser.add_option("-H", "--host",	action="store",		 help="Database Hostname",		dest="database_hostname", 	type="string")
 	parser.add_option("-u", "--user",	action="store", 	 help="Username to manipulate",	dest="database_username", 	type="string")
 	parser.add_option("-w", "--pw",		action="store", 	 help="Password to set",		dest="database_password", 	type="string")
@@ -230,21 +239,23 @@ def main():
 		config.read('/etc/cumin.conf')
 	else:
 		config.read(options.config_path)
-		
-	cassandra_username = config.get('cassandra', 'username')
-	cassandra_password = config.get('cassandra', 'password')
+	
+	# Get our database credentials from the conf
+	try:
+		cassandra_username = config.get('cassandra', 'username')
+		cassandra_password = config.get('cassandra', 'password')
+	except (ConfigParser.NoOptionError, ConfigParser.NoSectionError) as e:
+		sys.exit("Error: Config file missing a required section or option( " + e[0] + " )")
+	except Exception as e:
+		sys.exit("Unknown exception reading config file: " + str(e[0]))
 
 	# Determine which database we want and connect
 	cassandra_database = True # Replace all this later
 	if cassandra_database == True:
 		try:
 			session = connectCassandra(options.database_hostname, cassandra_username, cassandra_password)
-		except NoHostAvailable as e:
-			print "Error:", e[1][options.database_hostname]
-			sys.exit()
 		except Exception as e:
-			print "Unhandled exception connecting to host", e[0]
-			sys.exit()
+			sys.exit("Exception connecting to host: " + str(e[0]))
 
 	#####################################################################
 	# List users
@@ -256,28 +267,28 @@ def main():
 	# Create a user
 	if options.action_create_user == True:
 		if options.database_password is None:
-			options.database_password = getpass.getpass(prompt="Enter password for user " + options.database_username + ":")
+			#options.database_password = getpass.getpass(prompt="Enter password for user " + options.database_username + ":")
+			options.database_password = getPasswdInput(options.database_username)
 
 		createCassandraUser(session, options.database_username, options.database_password)
 		sys.exit()
 
 	#####################################################################
 	# Delete a user
-	if options.action_delete_user == True:
+	elif options.action_delete_user == True:
 		if options.database_username is None:
-			sys.exit("\nFatal :: Please supply a user to delete.\n")
+			sys.exit("Error: Please supply a user to delete.")
 
 		deleteCassandraUser(session, options.database_username)
 		sys.exit()
 
 	#####################################################################
 	# Update user's password
-	if options.action_passwd_user == True:
+	elif options.action_passwd_user == True:
 		if options.database_username is None:
-			sys.exit("\nFatal :: Please supply a user of which to modify their password.\n")
+			sys.exit("Error: Please supply a user of which to modify their password.")
 
 		if options.database_password is None:
-			#options.database_password = getpass.getpass(prompt='Enter password for user ' + options.database_username + ':')
 			options.database_password = getPasswdInput(options.database_username)
 
 		passwdCassandraUser(session, options.database_username, options.database_password)
@@ -285,13 +296,13 @@ def main():
 
 	#####################################################################
 	# Update user's grants
-	if options.action_grant_user == True:
+	elif options.action_grant_user == True:
 		# Required - A User
 		if options.database_username is None:
-			sys.exit("\nFatal :: Please suppply a user of which to adjust grants.\n")
+			sys.exit("Error: Please suppply a user of which to adjust grants.")
 		# Required - A Keyspace, Table, Resource of some kind. 
 		if options.database_resource is None:
-			sys.exit("\nFatal :: Please supply a keyspace of which to grant privileges.\n")
+			sys.exit("\Error: Please supply a keyspace of which to grant privileges.")
 
 		# If we --revoke, just yank the perms. Else, do everything. 
 		if options.permission_revoke == True:
@@ -316,7 +327,7 @@ def main():
 
 			# Required - A grant, all grants, some grants, no grants?
 			if len(grants) < 1:
-				sys.exit("\nFatal :: Please supply at least one permission or revoke the user's grants.\n")
+				sys.exit("Error: Please supply at least one permission or revoke the user's grants.")
 
 			#revokeCassandraUser(session, options.database_resource, options.database_username)
 			grantCassandraUser(session, options.database_resource, options.database_username, grants)

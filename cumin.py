@@ -25,14 +25,18 @@ def connectCassandra(hostname, username, password):
 
 # List users configured in a given cassandra host
 def listCassandraUsers(session):
-	# Run a few queries because cassandra doesn't support joins. 
-	user_rows = session.execute('SELECT username, salted_hash FROM credentials')
-	name_rows = session.execute('SELECT * FROM users')
-	perm_rows = session.execute('SELECT * FROM permissions')
+	try:
+		# Run a few queries because cassandra doesn't support joins. 
+		user_rows = session.execute('SELECT username, salted_hash FROM credentials')
+		name_rows = session.execute('SELECT * FROM users')
+		perm_rows = session.execute('SELECT * FROM permissions')
+	except Exception as e:
+		sys.exit("Error: Exception attempting to query database for users: " + str(e[0]))
 
 	users = []
 	max_resource_length = 0
 	max_username_length = 0
+
 	# First, look for superusers
 	for (name_name, superuser) in name_rows:
 		if superuser == True:
@@ -42,13 +46,16 @@ def listCassandraUsers(session):
 			super_dict['permissions'] = ""
 			super_dict['superuser'] = True
 
+			# Add salted hash to the user dict
 			for (user_name, salted_hash) in user_rows:
 				if name_name == user_name:
 					super_dict['salted_hash'] = salted_hash
 
+			# Field lengths for formatting our faux table
 			if max_username_length < len(name_name):
 				max_username_length = len(name_name)
 
+			# Now append the superuser dict to the users array
 			users.append(super_dict)
 
 	# Now let's find normal users who have some sort of permissions
@@ -59,16 +66,19 @@ def listCassandraUsers(session):
 		user_dict['permissions'] = permissions
 		user_dict['superuser'] = False
 
+		# Field lengths for formatting our faux table
 		if max_resource_length < len(resource):
 			max_resource_length = len(resource)
 
 		if max_username_length < len(perm_name):
 			max_username_length = len(perm_name)
 
+		# Add salted hash to the user dict
 		for (user_name, salted_hash) in user_rows:
 			if perm_name == user_name:
 				user_dict['salted_hash'] = salted_hash
 
+		# Now append the user dict to the users array
 		users.append(user_dict)
 
 	# Iter over the array of dicts and display infos
@@ -79,19 +89,23 @@ def listCassandraUsers(session):
 	print "----------------------------------------------------------------------------"
 	for i in range(users_length):
 		user = users[i]
-
-		# Only display permissions if the user isn't so super.
 		permissions = ""
 		resource = ""
+
+		# If we have superuser privs, there's no point in checking anything else. 
 		if (user['superuser'] == True):
 			resource = "Superuser"
 			permissions = "Superuser"
+		# Only display permissions if the user isn't so super.
 		else:
 			if 'resource' in user:
 				resource = user['resource']
 			else:
 				resource = "None"
 
+			# Figure out how many separate permissions the user is assigned
+			#	we can make some assumptions based on this number and give 
+			#	them a friendly name like "Read-Only" or "All".
 			if 'permissions' in user:
 				if user['permissions'] is None:
 					perm_length = 0
@@ -114,6 +128,7 @@ def listCassandraUsers(session):
 			elif perm_length == 0:
 				permissions = ""
 			else:
+				# Display a readable list of all the permissions
 				for perm in range(perm_length):
 					if len(permissions) > 0:
 						permissions = permissions + ", " + user['permissions'][perm]
@@ -127,30 +142,31 @@ def listCassandraUsers(session):
 	return True
 #
 # Create a new cassandra user
-def createCassandraUser(session, username, password):
+def createCassandraUser(session, username, password, superuser):
+	# Handle creation of superusers versus normal users
+	su = "NOSUPERUSER"
+	if superuser == True:
+		su = "SUPERUSER"
+
 	try:
-		session.execute(
-			"""
-			CREATE USER %s WITH PASSWORD %s NOSUPERUSER
-			""",
-			(username, password)
-		)
+		# After user is created, set their password so we can knock down the bcrypt rounds from 10
+		session.execute("CREATE USER %s WITH PASSWORD \'%s\' %s" % (username, password, su))
 		passwdCassandraUser(session, username, password)
+		print "User %s created successfully" % username
 		return True
 	except Exception as e:
-		sys.exit("Exception executing CREATE USER:" + str(e[0]))
+		sys.exit("Exception executing CREATE USER:" + str(e))
 #
 # Delete a cassandra user
 def deleteCassandraUser(session, username):
 	try:
-		session.execute("DROP USER %s" %username)
+		session.execute("DROP USER %s" % username)
+		print "User %s deleted successfully" % username
 		return True
 	except InvalidRequest as e:
-		print "Error:", e[0]
-		sys.exit()
+		sys.exit("Error: " + str(e[0]))
 	except Exception as e:
-		print "Exception executing DROP USER:", e[0]
-		sys.exit()
+		sys.exit("Error: Exception executing DROP USER: " + str(e[0]))
 #
 # Ask a user for their password interactively
 def getPasswdInput(username):
@@ -161,52 +177,66 @@ def getPasswdInput(username):
 		if first_password == second_password:
 			return first_password
 		else:
-			print "ERROR: Passwords do not match."
-
+			print "Error: Passwords do not match. Please try your luck again."
+#
 # Change a cassandra user's password
 def passwdCassandraUser(session, username, password):
+	# I should have paid attention to Mrs. Kuffner
 	hashola = bcrypt.hashpw(password, bcrypt.gensalt(4))
 
-	session.execute(
-		"""
-		INSERT INTO system_auth.credentials (username, salted_hash)
-		VALUES (%s, %s)
-		""",
-		(username, hashola)
-	)
-	return True
+	try:
+		session.execute(
+			"""
+			INSERT INTO system_auth.credentials (username, salted_hash)
+			VALUES (%s, %s)
+			""",
+			(username, hashola)
+		)
+		print "Set password for user %s successfully." % username
+		return True
+	except Exception as e:
+		sys.exit("Error: Exception executing password update for user " + username + ": " + str(e))
 
 # Revoke a user's rights
 def revokeCassandraUser(session, resource, username):
-	print "Revoking all permissions on %s from %s" % (resource, username)
-	session.execute("REVOKE ALL PERMISSIONS ON KEYSPACE %s FROM %s" % (resource, username))
-	return True
+	try:
+		session.execute("REVOKE ALL PERMISSIONS ON KEYSPACE %s FROM %s" % (resource, username))
+		print "All permissions on %s have been REVOKED from user %s." % (resource, username)
+		return True
+	except Exception as e:
+		sys.exit("Error: Exception while attempting to revoke permissions on %s from user %s: %s" % (resource, username, e))
 
 # Grant a user rights
 def grantCassandraUser(session, resource, username, grants):
 	grants_length = len(grants)
 	# We can assume if the grants requested is only one element and it contains ALL:
 	if grants_length == 1 and grants[0] == "ALL":
-		print "Granting all privileges on %s to %s" % (resource, username)
-		session.execute("GRANT ALL PERMISSIONS ON KEYSPACE %s TO %s" % (resource, username))
-
+		try:
+			session.execute("GRANT ALL PERMISSIONS ON KEYSPACE %s TO %s" % (resource, username))
+			print "Granting all privileges on %s to %s" % (resource, username)
+			return True
+		except Exception as e:
+			sys.exit("Error: Exception while attempting to grant user %s permissions on %s: %s" % (username, resource, e))
 	# If the grants array len is larger than one, we can assume we're specifying multiple grants
 	elif grants_length > 1:
 		grants_message = "Granted "
+		# One query per grant. yay. 
 		for grant in range(grants_length):
 			if grant == 0:
 				grants_message = grants_message + grants[grant]
 			else:
 				grants_message = grants_message + ", " + grants[grant]
 
-			session.execute("GRANT %s ON KEYSPACE %s TO %s" % (grants[grant], resource, username))
-		print grants_message + " on %s to %s." % (resource, username)
+			try:
+				session.execute("GRANT %s ON KEYSPACE %s TO %s" % (grants[grant], resource, username))
+			except Exception as e:
+				sys.exit("Error: Exception while attempting to grant user %s permissions on %s: %s" % (username, resource, e))
 
+		print grants_message + " on %s to %s." % (resource, username)
+		return True
 	# This is actually caught when this function is called, but we should protect ourselves here too
 	else:
 		sys.exit("Fatal: Please supply some grants with your grant option.")
-
-	return True
 
 def main():
 	# Parse command line arguments
@@ -231,6 +261,8 @@ def main():
 	parser.add_option("--select",		action="store_true", help="Select permission", 		dest="permission_select")
 	parser.add_option("--all",			action="store_true", help="Grant all permissions", 	dest="permission_all")
 	parser.add_option("--revoke",		action="store_true", help="Revoke all permissions", dest="permission_revoke")
+	# New User Options
+	parser.add_option("--super",		action="store_true", help="Create a superuser",		dest="permission_super")
 	(options, args) = parser.parse_args()
 
 	# Read our configuration file and set username / password
@@ -245,7 +277,7 @@ def main():
 		cassandra_username = config.get('cassandra', 'username')
 		cassandra_password = config.get('cassandra', 'password')
 	except (ConfigParser.NoOptionError, ConfigParser.NoSectionError) as e:
-		sys.exit("Error: Config file missing a required section or option( " + e[0] + " )")
+		sys.exit("Error: Config file missing a required section or option: (" + e[0] + ")")
 	except Exception as e:
 		sys.exit("Unknown exception reading config file: " + str(e[0]))
 
@@ -256,33 +288,25 @@ def main():
 			session = connectCassandra(options.database_hostname, cassandra_username, cassandra_password)
 		except Exception as e:
 			sys.exit("Exception connecting to host: " + str(e[0]))
-
-	#####################################################################
+	#
 	# List users
 	if options.action_list_users == True:
 		listCassandraUsers(session)
-		sys.exit()
-
-	#####################################################################
+	#
 	# Create a user
-	if options.action_create_user == True:
+	elif options.action_create_user == True:
 		if options.database_password is None:
-			#options.database_password = getpass.getpass(prompt="Enter password for user " + options.database_username + ":")
 			options.database_password = getPasswdInput(options.database_username)
 
-		createCassandraUser(session, options.database_username, options.database_password)
-		sys.exit()
-
-	#####################################################################
+		createCassandraUser(session, options.database_username, options.database_password, options.permission_super)
+	#
 	# Delete a user
 	elif options.action_delete_user == True:
 		if options.database_username is None:
 			sys.exit("Error: Please supply a user to delete.")
 
 		deleteCassandraUser(session, options.database_username)
-		sys.exit()
-
-	#####################################################################
+	#
 	# Update user's password
 	elif options.action_passwd_user == True:
 		if options.database_username is None:
@@ -292,9 +316,7 @@ def main():
 			options.database_password = getPasswdInput(options.database_username)
 
 		passwdCassandraUser(session, options.database_username, options.database_password)
-		sys.exit()
-
-	#####################################################################
+	#
 	# Update user's grants
 	elif options.action_grant_user == True:
 		# Required - A User
@@ -329,10 +351,8 @@ def main():
 			if len(grants) < 1:
 				sys.exit("Error: Please supply at least one permission or revoke the user's grants.")
 
-			#revokeCassandraUser(session, options.database_resource, options.database_username)
 			grantCassandraUser(session, options.database_resource, options.database_username, grants)
-		sys.exit()
-	#####################################################################
 
+#
 if __name__ == '__main__':
 	main()

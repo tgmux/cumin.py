@@ -1,7 +1,7 @@
 cumin.py
 ========
 
-A User Manager Utility for Cassandra 1.2.x
+A User Manager Utility for Cassandra 1.2.x for python 2.7
 
 ## Installation
 

@@ -21,7 +21,7 @@ def connectCassandra(hostname, username, password):
 	except NoHostAvailable as e:
 		sys.exit("Error: " + str(e[1][hostname]))
 	except Exception as e:
-		sys.exit("Error: Unhandled exception connecting to host: " + str(e[0]))
+		sys.exit("Error: Exception connecting to host: " + str(e[0]))
 
 # List users configured in a given cassandra host
 def listCassandraUsers(session):
@@ -78,14 +78,16 @@ def listCassandraUsers(session):
 			if perm_name == user_name:
 				user_dict['salted_hash'] = salted_hash
 
-		# Now append the user dict to the users array
-		users.append(user_dict)
+		if permissions:
+			# Now append the user dict to the users array
+			#print "Permissions: %s" % permissions
+			users.append(user_dict)
 
 	# Iter over the array of dicts and display infos
 	users_length = len(users)
 	max_resource_length += 1
 	max_username_length += 1
-	print ("Users(" + str(users_length) + "):").ljust(max_username_length), "Rnd:", "Resource:".ljust(max_resource_length), "Permissions:"
+	print ("!Users(" + str(users_length) + "):").ljust(max_username_length), "Rnd:", "Resource:".ljust(max_resource_length), "Permissions:"
 	print "----------------------------------------------------------------------------"
 	for i in range(users_length):
 		user = users[i]
@@ -151,8 +153,9 @@ def createCassandraUser(session, username, password, superuser):
 	try:
 		# After user is created, set their password so we can knock down the bcrypt rounds from 10
 		session.execute("CREATE USER %s WITH PASSWORD \'%s\' %s" % (username, password, su))
-		passwdCassandraUser(session, username, password)
 		print "User %s created successfully" % username
+
+		passwdCassandraUser(session, username, password)
 		return True
 	except Exception as e:
 		sys.exit("Exception executing CREATE USER:" + str(e))
@@ -192,7 +195,6 @@ def passwdCassandraUser(session, username, password):
 			""",
 			(username, hashola)
 		)
-		print "Set password for user %s successfully." % username
 		return True
 	except Exception as e:
 		sys.exit("Error: Exception executing password update for user " + username + ": " + str(e))
@@ -200,7 +202,7 @@ def passwdCassandraUser(session, username, password):
 # Revoke a user's rights
 def revokeCassandraUser(session, resource, username):
 	try:
-		session.execute("REVOKE ALL PERMISSIONS ON KEYSPACE %s FROM %s" % (resource, username))
+		session.execute("REVOKE ALL PERMISSIONS ON KEYSPACE \"%s\" FROM %s" % (resource, username))
 		print "All permissions on %s have been REVOKED from user %s." % (resource, username)
 		return True
 	except Exception as e:
@@ -212,7 +214,7 @@ def grantCassandraUser(session, resource, username, grants):
 	# We can assume if the grants requested is only one element and it contains ALL:
 	if grants_length == 1 and grants[0] == "ALL":
 		try:
-			session.execute("GRANT ALL PERMISSIONS ON KEYSPACE %s TO %s" % (resource, username))
+			session.execute("GRANT ALL PERMISSIONS ON KEYSPACE \"%s\" TO %s" % (resource, username))
 			print "Granting all privileges on %s to %s" % (resource, username)
 			return True
 		except Exception as e:
@@ -228,7 +230,7 @@ def grantCassandraUser(session, resource, username, grants):
 				grants_message = grants_message + ", " + grants[grant]
 
 			try:
-				session.execute("GRANT %s ON KEYSPACE %s TO %s" % (grants[grant], resource, username))
+				session.execute("GRANT %s ON KEYSPACE \"%s\" TO %s" % (grants[grant], resource, username))
 			except Exception as e:
 				sys.exit("Error: Exception while attempting to grant user %s permissions on %s: %s" % (username, resource, e))
 
@@ -284,6 +286,9 @@ def main():
 	# Determine which database we want and connect
 	cassandra_database = True # Replace all this later
 	if cassandra_database == True:
+		if options.database_hostname == None:
+			sys.exit("Error: Please supply a hostname to connect with.")
+
 		try:
 			session = connectCassandra(options.database_hostname, cassandra_username, cassandra_password)
 		except Exception as e:
@@ -315,7 +320,8 @@ def main():
 		if options.database_password is None:
 			options.database_password = getPasswdInput(options.database_username)
 
-		passwdCassandraUser(session, options.database_username, options.database_password)
+		if passwdCassandraUser(session, options.database_username, options.database_password):
+			print "Set password for user %s successfully." % options.database_username
 	#
 	# Update user's grants
 	elif options.action_grant_user == True:
@@ -324,7 +330,7 @@ def main():
 			sys.exit("Error: Please suppply a user of which to adjust grants.")
 		# Required - A Keyspace, Table, Resource of some kind. 
 		if options.database_resource is None:
-			sys.exit("\Error: Please supply a keyspace of which to grant privileges.")
+			sys.exit("Error: Please supply a keyspace of which to grant privileges.")
 
 		# If we --revoke, just yank the perms. Else, do everything. 
 		if options.permission_revoke == True:

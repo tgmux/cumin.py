@@ -9,45 +9,39 @@ A User Manager Utility for Cassandra 1.2.x for python 2.7
 
 ## Usage
 ```
-Usage: cumin.py [options]
+Usage: cumin.py [action] hostname <username> <keyspace> <permissions...>
 
-Options:
-  -h, --help            show this help message and exit
-  --conf=CONFIG_PATH    Path to config file (/etc/cumin.conf default)
-  -H DATABASE_HOSTNAME, --host=DATABASE_HOSTNAME
-                        Database Hostname
-  -u DATABASE_USERNAME, --user=DATABASE_USERNAME
-                        Username to manipulate
-  -w DATABASE_PASSWORD, --pw=DATABASE_PASSWORD
-                        Password to set
-  -r DATABASE_RESOURCE, --resource=DATABASE_RESOURCE
-                        Resource to grant
-  -l, --list            List cassandra users
-  -n, --new             Create a new user
-  -d, --delete          Delete an existing user
-  -p, --passwd          Change a user's password
-  -g, --grant           Modify user's grants
-  --alter               Alter permission
-  --create              Create permission
-  --authorize           Authorize permission
-  --drop                Drop permission
-  --modify              Modify permission
-  --select              Select permission
-  --all                 Grant all permissions
-  --revoke              Revoke all permissions
-  --super               Create a superuser
+Actions (required):
+- list
+- create (username)
+- delete (username)
+- passwd (username)
+- revoke (username, keyspace)
+- grant  (username, keyspace, permissions...)
+
+Permissions:
+- all
+- alter
+- authorize
+- create
+- drop
+- modify
+- select
 ```
 
 ### Examples
 Read only access:
 
-`$ cumin.py -H mycassandrahost -g -u auser -r akeyspace --select`
+`$ cumin.py grant mycassandrahost auser akeyspace select`
 
 Create a new superuser:
 
-`$ cumin.py -H anothercassandrahost -n -u bossman --super`
+`$ cumin.py create mycassandrahost bossman superuser`
+
+Create a regular user:
+
+`$ cumin.py create mycassandrahost normaluser`
 
 Change a user's password:
 
-`$ cumin.py -H thatcassandrahost -p -u buser`
-`$ cumin.py -H thatcassandrahost -p -u buser -w secretpassword`
+`$ cumin.py passwd mycassandrahost normaluser`

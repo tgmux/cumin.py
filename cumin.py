@@ -4,7 +4,6 @@ from cassandra import InvalidRequest
 from cassandra.cluster import Cluster, NoHostAvailable
 import ConfigParser
 import getpass
-from optparse import OptionParser
 import os
 import sys
 
@@ -144,12 +143,13 @@ def listCassandraUsers(session):
 	return True
 #
 # Create a new cassandra user
-def createCassandraUser(session, username, password, superuser):
+def createCassandraUser(session, username, superuser):
 	# Handle creation of superusers versus normal users
 	su = "NOSUPERUSER"
 	if superuser == True:
 		su = "SUPERUSER"
 
+	password = getPasswdInput(username)
 	try:
 		# After user is created, set their password so we can knock down the bcrypt rounds from 10
 		session.execute("CREATE USER %s WITH PASSWORD \'%s\' %s" % (username, password, su))
@@ -208,6 +208,15 @@ def revokeCassandraUser(session, resource, username):
 	except Exception as e:
 		sys.exit("Error: Exception while attempting to revoke permissions on %s from user %s: %s" % (resource, username, e))
 
+# Helper function to try / except looking for CLI options
+def tryValue(action, component, position):
+	try:
+		value = sys.argv[position]
+	except IndexError as e:
+		sys.exit("Error: Action %s reqtures a %s component." % (action, component))
+
+	return value
+
 # Grant a user rights
 def grantCassandraUser(session, resource, username, grants):
 	grants_length = len(grants)
@@ -220,7 +229,7 @@ def grantCassandraUser(session, resource, username, grants):
 		except Exception as e:
 			sys.exit("Error: Exception while attempting to grant user %s permissions on %s: %s" % (username, resource, e))
 	# If the grants array len is larger than one, we can assume we're specifying multiple grants
-	elif grants_length > 1:
+	elif grants_length >= 1:
 		grants_message = "Granted "
 		# One query per grant. yay. 
 		for grant in range(grants_length):
@@ -238,41 +247,21 @@ def grantCassandraUser(session, resource, username, grants):
 		return True
 	# This is actually caught when this function is called, but we should protect ourselves here too
 	else:
-		sys.exit("Fatal: Please supply some grants with your grant option.")
+		sys.exit("Error: Please supply some grants with your grant option.")
 
 def main():
 	# Parse command line arguments
-	parser = OptionParser()
-	parser.add_option("--conf",	action="store",	help="Path to config file (/etc/cumin.conf default)", dest="config_path", type="string")
-	parser.add_option("-H", "--host",	action="store",		 help="Database Hostname",		dest="database_hostname", 	type="string")
-	parser.add_option("-u", "--user",	action="store", 	 help="Username to manipulate",	dest="database_username", 	type="string")
-	parser.add_option("-w", "--pw",		action="store", 	 help="Password to set",		dest="database_password", 	type="string")
-	parser.add_option("-r", "--resource", action="store",	 help="Resource to grant", 		dest="database_resource",	type="string")
-	# User options
-	parser.add_option("-l", "--list",	action="store_true", help="List cassandra users",	dest="action_list_users")
-	parser.add_option("-n", "--new",	action="store_true", help="Create a new user",		dest="action_create_user")
-	parser.add_option("-d", "--delete", action="store_true", help="Delete an existing user", dest="action_delete_user")
-	parser.add_option("-p", "--passwd", action="store_true", help="Change a user's password", dest="action_passwd_user")
-	parser.add_option("-g", "--grant",	action="store_true", help="Modify user's grants",	dest="action_grant_user")
-	# Permissions Options
-	parser.add_option("--alter",		action="store_true", help="Alter permission", 		dest="permission_alter")
-	parser.add_option("--create",		action="store_true", help="Create permission", 		dest="permission_create")
-	parser.add_option("--authorize",	action="store_true", help="Authorize permission", 	dest="permission_authorize")
-	parser.add_option("--drop",			action="store_true", help="Drop permission", 		dest="permission_drop")
-	parser.add_option("--modify",		action="store_true", help="Modify permission", 		dest="permission_modify")
-	parser.add_option("--select",		action="store_true", help="Select permission", 		dest="permission_select")
-	parser.add_option("--all",			action="store_true", help="Grant all permissions", 	dest="permission_all")
-	parser.add_option("--revoke",		action="store_true", help="Revoke all permissions", dest="permission_revoke")
-	# New User Options
-	parser.add_option("--super",		action="store_true", help="Create a superuser",		dest="permission_super")
-	(options, args) = parser.parse_args()
-
+	# actions (list, create, delete, passwd, grant, revoke)
+	cumin_args = {}
+	cumin_args['action'] = tryValue('any', 'action', 1)
+	cumin_args['hostname'] = tryValue(cumin_args['action'], 'hostname', 2)
+	
 	# Read our configuration file and set username / password
 	config = ConfigParser.SafeConfigParser()
-	if options.config_path is None:
-		config.read('/etc/cumin.conf')
+	if 'CUMIN_CONF' in os.environ.keys():
+		config.read(os.environ['CUMIN_CONF'])
 	else:
-		config.read(options.config_path)
+		config.read('/etc/cumin.conf')
 	
 	# Get our database credentials from the conf
 	try:
@@ -281,85 +270,59 @@ def main():
 	except (ConfigParser.NoOptionError, ConfigParser.NoSectionError) as e:
 		sys.exit("Error: Config file missing a required section or option: (" + e[0] + ")")
 	except Exception as e:
-		sys.exit("Unknown exception reading config file: " + str(e[0]))
+		sys.exit("Error: Unknown exception reading config file: " + str(e[0]))
 
 	# Determine which database we want and connect
 	cassandra_database = True # Replace all this later
 	if cassandra_database == True:
-		if options.database_hostname == None:
-			sys.exit("Error: Please supply a hostname to connect with.")
-
 		try:
-			session = connectCassandra(options.database_hostname, cassandra_username, cassandra_password)
+			session = connectCassandra(cumin_args['hostname'], cassandra_username, cassandra_password)
 		except Exception as e:
-			sys.exit("Exception connecting to host: " + str(e[0]))
-	#
+			sys.exit("Error: Exception connecting to host: " + str(e[0]))
+
 	# List users
-	if options.action_list_users == True:
+	if cumin_args['action'] == 'list':
 		listCassandraUsers(session)
-	#
-	# Create a user
-	elif options.action_create_user == True:
-		if options.database_password is None:
-			options.database_password = getPasswdInput(options.database_username)
-
-		createCassandraUser(session, options.database_username, options.database_password, options.permission_super)
-	#
-	# Delete a user
-	elif options.action_delete_user == True:
-		if options.database_username is None:
-			sys.exit("Error: Please supply a user to delete.")
-
-		deleteCassandraUser(session, options.database_username)
-	#
-	# Update user's password
-	elif options.action_passwd_user == True:
-		if options.database_username is None:
-			sys.exit("Error: Please supply a user of which to modify their password.")
-
-		if options.database_password is None:
-			options.database_password = getPasswdInput(options.database_username)
-
-		if passwdCassandraUser(session, options.database_username, options.database_password):
-			print "Set password for user %s successfully." % options.database_username
-	#
-	# Update user's grants
-	elif options.action_grant_user == True:
-		# Required - A User
-		if options.database_username is None:
-			sys.exit("Error: Please suppply a user of which to adjust grants.")
-		# Required - A Keyspace, Table, Resource of some kind. 
-		if options.database_resource is None:
-			sys.exit("Error: Please supply a keyspace of which to grant privileges.")
-
-		# If we --revoke, just yank the perms. Else, do everything. 
-		if options.permission_revoke == True:
-			revokeCassandraUser(session, options.database_resource, options.database_username)
-		else: 
-			# Make an array of grants if we have less than 'ALL'
-			grants = []
-			if options.permission_all == True:
-				grants = ['ALL']
+	else:
+		cumin_args['username'] = tryValue(cumin_args['action'], 'username', 3)
+		# Create a user
+		if cumin_args['action'] == 'create':
+			# cumin create db01.svcs.xxx joeuser superuser
+			if len(sys.argv) >= 5:
+				cumin_args['superuser'] = sys.argv[4]
 			else:
-				if options.permission_alter == True:
-					grants.append('ALTER')
-				if options.permission_create == True:
-					grants.append('CREATE')
-				if options.permission_authorize == True:
-					grants.append('AUTHORIZE')
-				if options.permission_drop == True:
-					grants.append('DROP')
-				if options.permission_modify == True:
-					grants.append('MODIFY')
-				if options.permission_select == True:
-					grants.append('SELECT')
+				cumin_args['superuser'] = "NOSUPERUSER"
+			createCassandraUser(session, cumin_args['username'], cumin_args['superuser'])
 
-			# Required - A grant, all grants, some grants, no grants?
-			if len(grants) < 1:
-				sys.exit("Error: Please supply at least one permission or revoke the user's grants.")
+		# Delete a user
+		elif cumin_args['action'] == 'delete':
+			deleteCassandraUser(session, cumin_args['username'])
 
-			grantCassandraUser(session, options.database_resource, options.database_username, grants)
+		# Update user's password
+		elif cumin_args['action'] == 'passwd':
+			if passwdCassandraUser(session, cumin_args['username'], getPasswdInput(cumin_args['username'])):
+				print "Set password for user %s successfully." % cumin_args['username']
 
+		# Update user's grants
+		elif cumin_args['action'] == 'grant':
+			# Required - A Keyspace, Table, Resource of some kind. 
+			cumin_args['resource'] = tryValue(cumin_args['action'], 'resource', 4)
+			if len(sys.argv) >= 6:
+				# Make an array of grants if we have less than 'ALL'
+				grants = []
+				if sys.argv[5] == 'all':
+					grants = ['ALL']
+				else:
+					for i in range(5, len(sys.argv)):
+						grants.append(sys.argv[i].upper())
+
+				grantCassandraUser(session, cumin_args['resource'], cumin_args['username'], grants)
+			else:
+				sys.exit("Error: Please supply at least one permission to grant.")
+		#
+		# Revoke user's grants
+		elif cumin_args['action'] == 'revoke':
+			revokeCassandraUser(session, tryValue(cumin_args['action'], 'resource', 4), cumin_args['username'])
 #
 if __name__ == '__main__':
 	main()

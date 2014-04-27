@@ -27,6 +27,9 @@ Permissions:
 - drop
 - modify
 - select
+
+Environment Variables:
+- CUMIN_CONF - Path to cumin.conf
 ```
 
 ### Examples

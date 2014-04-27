@@ -7,6 +7,40 @@ import getpass
 import os
 import sys
 
+# Helper output
+def displayHelp():
+	return """
+Usage: cumin.py [action] hostname <username> <keyspace> <permissions...>
+
+Actions (required):
+- list
+- create (username)
+- delete (username)
+- passwd (username)
+- revoke (username, keyspace)
+- grant  (username, keyspace, permissions...)
+
+Permissions:
+- all
+- alter
+- authorize
+- create
+- drop
+- modify
+- select
+
+Environment Variables:
+- CUMIN_CONF - Path to cumin.conf
+
+Examples:
+$ cumin.py create mycassandrahost bossman superuser
+$ cumin.py create mycassandrahost normaluser
+$ cumin.py passwd mycassandrahost normaluser
+$ cumin.py grant mycassandrahost normaluser akeyspace select alter create
+$ cumin.py revoke mycassandrahost normaluser akeyspace
+$ cumin.py grant mycassandrahost normaluser akeyspace all
+"""
+
 # Connect to cassandra and return a session
 def connectCassandra(hostname, username, password):
 	# Simple function to return a dict with connection credentials because reasons
@@ -254,6 +288,9 @@ def main():
 	# actions (list, create, delete, passwd, grant, revoke)
 	cumin_args = {}
 	cumin_args['action'] = tryValue('any', 'action', 1)
+
+	if cumin_args['action'] == 'help':
+		sys.exit(displayHelp())
 	cumin_args['hostname'] = tryValue(cumin_args['action'], 'hostname', 2)
 	
 	# Read our configuration file and set username / password
